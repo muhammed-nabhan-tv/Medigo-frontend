@@ -30,7 +30,17 @@ export default function SignInPage() {
   const [isLoading, setIsLoading] = React.useState(false)
   const [successMsg, setSuccessMsg] = React.useState("")
   const [errorMsg, setErrorMsg] = React.useState("")
-  const { signIn } = useAuth()
+  const [role, setRole] = React.useState<"patient" | "doctor" | "clinic">("patient")
+  
+  // OTP 2FA States
+  const [showOTPVerify, setShowOTPVerify] = React.useState(false)
+  const [otpEmail, setOtpEmail] = React.useState("")
+  const [phoneObfuscated, setPhoneObfuscated] = React.useState("")
+  const [debugOtp, setDebugOtp] = React.useState("")
+  const [otpCode, setOtpCode] = React.useState("")
+  const [isVerifying, setIsVerifying] = React.useState(false)
+
+  const { signIn, verifyOTP, resendOTP, clinicSignIn } = useAuth()
   const router = useRouter()
   const {
     register,
@@ -50,16 +60,86 @@ export default function SignInPage() {
     setSuccessMsg("")
     setErrorMsg("")
     try {
-      await signIn({
-        email: data.email,
-        password: data.password,
-      })
-      setSuccessMsg("Success! Redirecting to dashboard...")
-      router.push('/')
+      if (role === "clinic") {
+        const res = await clinicSignIn({
+          email: data.email,
+          password: data.password,
+        })
+        setSuccessMsg("Success! Redirecting to dashboard...")
+        setTimeout(() => {
+          router.push('/clinic')
+        }, 1000)
+      } else {
+        const res = await signIn({
+          email: data.email,
+          password: data.password,
+        })
+        
+        if (res && res.requireOTP) {
+          setOtpEmail(res.email)
+          setPhoneObfuscated(res.phoneObfuscated || "")
+          if (res.debugOtp) {
+            setDebugOtp(res.debugOtp)
+          } else {
+            setDebugOtp("")
+          }
+          setShowOTPVerify(true)
+          setSuccessMsg("Verification code sent to your registered phone!")
+        } else {
+          setSuccessMsg("Success! Redirecting to dashboard...")
+          const dest = role === "doctor" ? "/doctor" : "/"
+          setTimeout(() => {
+            router.push(dest)
+          }, 1000)
+        }
+      }
     } catch (error: any) {
       setErrorMsg(error.message || "An unexpected error occurred")
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleVerifyOTP = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (otpCode.length !== 6) {
+      setErrorMsg("Please enter a valid 6-digit code")
+      return
+    }
+    setIsVerifying(true)
+    setErrorMsg("")
+    setSuccessMsg("")
+    try {
+      const res = await verifyOTP(otpEmail, otpCode, "login")
+      setSuccessMsg("Verification successful! Redirecting to dashboard...")
+      const role = res?.user?.role
+      const dest = role === "doctor" ? "/doctor" : role === "clinic" ? "/clinic" : "/"
+      setTimeout(() => {
+        router.push(dest)
+      }, 1000)
+    } catch (error: any) {
+      setErrorMsg(error.message || "Invalid or expired verification code")
+    } finally {
+      setIsVerifying(false)
+    }
+  }
+
+  const handleResendOTP = async () => {
+    setIsVerifying(true)
+    setErrorMsg("")
+    setSuccessMsg("")
+    try {
+      const res = await resendOTP(otpEmail)
+      setSuccessMsg("A new verification code has been sent!")
+      if (res && res.debugOtp) {
+        setDebugOtp(res.debugOtp)
+      } else {
+        setDebugOtp("")
+      }
+    } catch (error: any) {
+      setErrorMsg(error.message || "Failed to resend code")
+    } finally {
+      setIsVerifying(false)
     }
   }
 
@@ -214,89 +294,227 @@ export default function SignInPage() {
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-            {successMsg && (
-              <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-3 text-sm font-medium text-emerald-800 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/30 animate-fade-in">
-                {successMsg}
+          {showOTPVerify ? (
+            <form onSubmit={handleVerifyOTP} className="space-y-6">
+              <div className="text-center space-y-2">
+                <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Verify Your Identity</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  We've sent a 6-digit verification code to your phone number ending in <span className="font-semibold text-slate-700 dark:text-slate-200">{phoneObfuscated || "digits"}</span>.
+                </p>
               </div>
-            )}
-            {errorMsg && (
-              <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-3 text-sm font-medium text-red-800 dark:text-red-300 border border-red-100 dark:border-red-900/30 animate-fade-in" role="alert">
-                {errorMsg}
-              </div>
-            )}
 
-            <Input
-              id="email"
-              type="email"
-              label="Email Address"
-              placeholder="name@example.com"
-              autoComplete="email"
-              error={errors.email?.message}
-              disabled={isLoading}
-              {...register("email")}
-            />
-
-            <PasswordInput
-              id="password"
-              label="Password"
-              placeholder="••••••••"
-              autoComplete="current-password"
-              forgotPasswordHref="#forgot"
-              error={errors.password?.message}
-              disabled={isLoading}
-              {...register("password")}
-            />
-
-            {/* Checkbox and Persistence */}
-            <div className="flex items-center space-x-2.5">
-              <Checkbox
-                id="rememberMe"
-                onCheckedChange={(checked) => {
-                  // Connect state manually with react-hook-form register
-                  const checkboxElem = document.getElementById("rememberMe") as HTMLInputElement | null;
-                  if (checkboxElem) {
-                    checkboxElem.checked = !!checked;
-                  }
-                }}
-                disabled={isLoading}
-              />
-              <label
-                htmlFor="rememberMe"
-                className="text-sm font-medium text-slate-600 dark:text-slate-400 cursor-pointer select-none leading-none"
-              >
-                Keep me signed in for 30 days
-              </label>
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-600/10 transition-all duration-150 hover:bg-emerald-700 hover:shadow-emerald-700/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer select-none"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Signing in...
-                </>
-              ) : (
-                "Sign In to Dashboard"
+              {successMsg && (
+                <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-3 text-sm font-medium text-emerald-800 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/30 animate-fade-in">
+                  {successMsg}
+                </div>
               )}
-            </button>
-          </form>
+              {errorMsg && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-3 text-sm font-medium text-red-800 dark:text-red-300 border border-red-100 dark:border-red-900/30 animate-fade-in" role="alert">
+                  {errorMsg}
+                </div>
+              )}
+
+              {debugOtp && (
+                <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 p-3 text-xs font-semibold text-amber-800 dark:text-amber-300 border border-amber-200/50 dark:border-amber-900/30 text-center animate-pulse">
+                  Debug Verification Code: <span className="font-mono text-sm underline select-all">{debugOtp}</span>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label htmlFor="otp" className="text-xs font-bold uppercase tracking-wider text-slate-450 dark:text-slate-550 block text-center">
+                  6-Digit OTP Code
+                </label>
+                <input
+                  id="otp"
+                  type="text"
+                  pattern="\d*"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="000000"
+                  disabled={isVerifying}
+                  className="w-full text-center text-3xl font-mono tracking-[0.5em] pl-[0.25em] h-14 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all font-semibold"
+                  required
+                />
+              </div>
+
+              <div className="flex flex-col gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={isVerifying || otpCode.length !== 6}
+                  className="flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-600/10 transition-all duration-150 hover:bg-emerald-700 hover:shadow-emerald-700/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer select-none"
+                >
+                  {isVerifying ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Verifying...
+                    </>
+                  ) : (
+                    "Verify & Complete Sign In"
+                  )}
+                </button>
+
+                <div className="flex items-center justify-between text-xs px-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOTPVerify(false)
+                      setErrorMsg("")
+                      setSuccessMsg("")
+                      setOtpCode("")
+                    }}
+                    disabled={isVerifying}
+                    className="font-semibold text-slate-500 hover:text-slate-750 transition-colors cursor-pointer bg-transparent border-0"
+                  >
+                    Back to credentials
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResendOTP}
+                    disabled={isVerifying}
+                    className="font-semibold text-emerald-600 hover:text-emerald-750 transition-colors cursor-pointer bg-transparent border-0"
+                  >
+                    Resend code
+                  </button>
+                </div>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+              {successMsg && (
+                <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-3 text-sm font-medium text-emerald-800 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/30 animate-fade-in">
+                  {successMsg}
+                </div>
+              )}
+              {errorMsg && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-3 text-sm font-medium text-red-800 dark:text-red-300 border border-red-100 dark:border-red-900/30 animate-fade-in" role="alert">
+                  {errorMsg}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-550">I am signing in as a</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRole("patient")}
+                    className={`py-3 px-1 rounded-xl border text-xs font-bold transition-all select-none cursor-pointer text-center ${
+                      role === "patient"
+                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    }`}
+                  >
+                    Patient
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRole("doctor")}
+                    className={`py-3 px-1 rounded-xl border text-xs font-bold transition-all select-none cursor-pointer text-center ${
+                      role === "doctor"
+                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    }`}
+                  >
+                    Practitioner
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRole("clinic")}
+                    className={`py-3 px-1 rounded-xl border text-xs font-bold transition-all select-none cursor-pointer text-center ${
+                      role === "clinic"
+                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    }`}
+                  >
+                    Clinic
+                  </button>
+                </div>
+              </div>
+
+              <Input
+                id="email"
+                type="email"
+                label="Email Address"
+                placeholder="name@example.com"
+                autoComplete="email"
+                error={errors.email?.message}
+                disabled={isLoading}
+                {...register("email")}
+              />
+
+              <PasswordInput
+                id="password"
+                label="Password"
+                placeholder="••••••••"
+                autoComplete="current-password"
+                forgotPasswordHref="#forgot"
+                error={errors.password?.message}
+                disabled={isLoading}
+                {...register("password")}
+              />
+
+              {/* Checkbox and Persistence */}
+              <div className="flex items-center space-x-2.5">
+                <Checkbox
+                  id="rememberMe"
+                  onCheckedChange={(checked) => {
+                    // Connect state manually with react-hook-form register
+                    const checkboxElem = document.getElementById("rememberMe") as HTMLInputElement | null;
+                    if (checkboxElem) {
+                      checkboxElem.checked = !!checked;
+                    }
+                  }}
+                  disabled={isLoading}
+                />
+                <label
+                  htmlFor="rememberMe"
+                  className="text-sm font-medium text-slate-600 dark:text-slate-400 cursor-pointer select-none leading-none"
+                >
+                  Keep me signed in for 30 days
+                </label>
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-600/10 transition-all duration-150 hover:bg-emerald-700 hover:shadow-emerald-700/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer select-none"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  "Sign In to Dashboard"
+                )}
+              </button>
+            </form>
+          )}
 
           {/* Footer */}
-          <div className="text-center text-sm">
-            <span className="text-slate-500 dark:text-slate-400">
-              Don't have an account?{" "}
-            </span>
-            <Link
-              href="/signup"
-              className="font-semibold text-emerald-600 hover:text-emerald-700 transition-colors focus-visible:outline-none focus-visible:underline"
-            >
-              Sign up
-            </Link>
+          <div className="space-y-3 text-center text-sm">
+            <div>
+              <span className="text-slate-500 dark:text-slate-400">
+                Don&apos;t have an account?{" "}
+              </span>
+              <Link
+                href="/signup"
+                className="font-semibold text-emerald-600 hover:text-emerald-700 transition-colors focus-visible:outline-none focus-visible:underline"
+              >
+                Sign up
+              </Link>
+            </div>
+            <div>
+              <span className="text-slate-500 dark:text-slate-400">Clinic admin?{" "}</span>
+              <Link
+                href="/clinic/signin"
+                className="font-semibold text-emerald-600 hover:text-emerald-700 transition-colors focus-visible:outline-none focus-visible:underline"
+              >
+                Clinic sign in
+              </Link>
+            </div>
           </div>
         </div>
       </div>

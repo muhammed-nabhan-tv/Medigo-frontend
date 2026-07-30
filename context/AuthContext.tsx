@@ -1,14 +1,16 @@
 "use client"
 
-import React, { createContext, useContext, useState, useEffect } from "react"
+import React, { createContext, useContext, useState, useEffect, useRef } from "react"
 import { usePathname, useRouter } from "next/navigation"
 
 interface User {
   id: string
   fullName: string
   email: string
-  dob: string
+  dob?: string
   phone: string
+  role?: string
+  clinicName?: string
 }
 
 interface AuthContextType {
@@ -18,11 +20,31 @@ interface AuthContextType {
   isLoading: boolean
   signIn: (data: any) => Promise<any>
   signUp: (data: any) => Promise<any>
+  clinicSignIn: (data: { email: string; password: string }) => Promise<any>
+  clinicSignUp: (data: {
+    clinicName: string
+    email: string
+    password: string
+    phone: string
+    agreeTerms: boolean
+  }) => Promise<any>
+  verifyOTP: (email: string, otp: string, purpose: string) => Promise<any>
+  resendOTP: (email: string) => Promise<any>
   signOut: () => void
-  fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
+
+const getJwtExpiry = (token: string): number | null => {
+  try {
+    const parts = token.split(".")
+    if (parts.length !== 3) return null
+    const payload = JSON.parse(window.atob(parts[1]))
+    return payload.exp ? payload.exp * 1000 : null
+  } catch (e) {
+    return null
+  }
+}
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null)
@@ -30,34 +52,177 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [isLoading, setIsLoading] = useState(true)
   const pathname = usePathname()
   const router = useRouter()
+  const refreshTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  const scheduleTokenRefresh = (tokenStr: string) => {
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current)
+    }
+
+    const expiry = getJwtExpiry(tokenStr)
+    if (!expiry) return
+
+    const now = Date.now()
+    const timeUntilExpiry = expiry - now
+    
+    // Refresh 1 minute before expiry or halfway if it's very short
+    const safetyMargin = Math.min(60 * 1000, timeUntilExpiry / 2)
+    const delay = Math.max(0, timeUntilExpiry - safetyMargin)
+
+    refreshTimeoutRef.current = setTimeout(async () => {
+      try {
+        await refreshTokens()
+      } catch (err) {
+        console.error("Auto refresh token failed:", err)
+      }
+    }, delay)
+  }
+
+  const refreshTokens = async () => {
+    const storedRefreshToken = localStorage.getItem("medigo_refresh_token")
+    if (!storedRefreshToken) {
+      signOut()
+      return null
+    }
+
+    try {
+      const response = await fetch("http://localhost:5000/api/auth/refresh", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ refreshToken: storedRefreshToken }),
+      })
+
+      const resData = await response.json()
+
+      if (!response.ok) {
+        throw new Error(resData.message || "Failed to refresh token")
+      }
+
+      setToken(resData.token)
+      localStorage.setItem("medigo_token", resData.token)
+      if (resData.refreshToken) {
+        localStorage.setItem("medigo_refresh_token", resData.refreshToken)
+      }
+
+      scheduleTokenRefresh(resData.token)
+      return resData.token
+    } catch (error) {
+      console.error("Token refresh failed, logging out user:", error)
+      signOut()
+      throw error
+    }
+  }
 
   useEffect(() => {
-    // Load authentication context on mount
-    const storedToken = localStorage.getItem("medigo_token")
-    const storedUser = localStorage.getItem("medigo_user")
+    const initializeAuth = async () => {
+      const storedToken = localStorage.getItem("medigo_token")
+      const storedUser = localStorage.getItem("medigo_user")
+      const storedRefreshToken = localStorage.getItem("medigo_refresh_token")
 
-    if (storedToken && storedUser) {
-      setToken(storedToken)
-      try {
-        setUser(JSON.parse(storedUser))
-      } catch (e) {
-        console.error("Failed to parse stored user from localStorage:", e)
+      if (storedToken && storedUser) {
+        const expiry = getJwtExpiry(storedToken)
+        const now = Date.now()
+
+        // If token expires in less than 10 seconds, try to refresh immediately on mount
+        if (expiry && expiry - now < 10000 && storedRefreshToken) {
+          try {
+            const newToken = await refreshTokens()
+            if (newToken) {
+              setToken(newToken)
+              setUser(JSON.parse(storedUser))
+            }
+          } catch (e) {
+            console.error("Failed to initialize auth with refreshed token:", e)
+            signOut()
+          }
+        } else {
+          setToken(storedToken)
+          try {
+            setUser(JSON.parse(storedUser))
+            scheduleTokenRefresh(storedToken)
+          } catch (e) {
+            console.error("Failed to parse stored user from localStorage:", e)
+          }
+        }
+      }
+      setIsLoading(false)
+    }
+
+    initializeAuth()
+
+    return () => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current)
       }
     }
-    setIsLoading(false)
   }, [])
 
   // Client-side route guard
   useEffect(() => {
     if (isLoading) return
 
-    const publicPages = ["/", "/signin", "/signup", "/about", "/contact"]
-    const isPublicPage = publicPages.includes(pathname)
+    const publicPages = ["/", "/signin", "/signup", "/about", "/contact", "/set-password"]
+    const isClinicAuthPage =
+      pathname === "/clinic/signin" || pathname === "/clinic/signup"
+    const isPublicPage = publicPages.includes(pathname) || isClinicAuthPage
 
-    if (!isPublicPage && !user) {
-      router.push("/signin")
+    if (!user) {
+      if (!isPublicPage) {
+        if (pathname.startsWith("/clinic")) {
+          router.push("/clinic/signin")
+        } else {
+          router.push("/signin")
+        }
+      }
+      return
+    }
+
+    if (user.role === "clinic") {
+      if (
+        pathname === "/" ||
+        pathname.startsWith("/booking") ||
+        pathname.startsWith("/profile") ||
+        pathname.startsWith("/doctor") ||
+        pathname === "/signin" ||
+        pathname === "/signup" ||
+        pathname === "/clinic/signin" ||
+        pathname === "/clinic/signup"
+      ) {
+        router.push("/clinic")
+      }
+      return
+    }
+
+    if (user.role === "doctor") {
+      if (
+        pathname === "/" ||
+        pathname.startsWith("/booking") ||
+        pathname.startsWith("/profile") ||
+        pathname.startsWith("/clinic")
+      ) {
+        router.push("/doctor")
+      }
+      return
+    }
+
+    // Patients should not visit doctor / clinic dashboards
+    if (pathname.startsWith("/doctor") || pathname === "/clinic") {
+      router.push("/")
     }
   }, [user, pathname, isLoading, router])
+
+  const persistSession = (resData: any) => {
+    setToken(resData.token)
+    setUser(resData.user)
+    localStorage.setItem("medigo_token", resData.token)
+    localStorage.setItem("medigo_user", JSON.stringify(resData.user))
+    if (resData.refreshToken) {
+      localStorage.setItem("medigo_refresh_token", resData.refreshToken)
+    }
+    scheduleTokenRefresh(resData.token)
+  }
 
   const signIn = async (data: any) => {
     const response = await fetch("http://localhost:5000/api/auth/login", {
@@ -77,12 +242,46 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       throw new Error(resData.message || "Failed to sign in")
     }
 
-    setToken(resData.token)
-    setUser(resData.user)
-    localStorage.setItem("medigo_token", resData.token)
-    localStorage.setItem("medigo_refresh_token", resData.refreshToken)
-    localStorage.setItem("medigo_user", JSON.stringify(resData.user))
+    // If 2FA OTP is required, stop here and let frontend component handle it
+    if (resData.requireOTP) {
+      return resData
+    }
 
+    persistSession(resData)
+    return resData
+  }
+
+  const clinicSignIn = async (data: { email: string; password: string }) => {
+    const response = await fetch("http://localhost:5000/api/clinic/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    })
+    const resData = await response.json()
+    if (!response.ok) {
+      throw new Error(resData.message || "Failed to sign in")
+    }
+    persistSession(resData)
+    return resData
+  }
+
+  const clinicSignUp = async (data: {
+    clinicName: string
+    email: string
+    password: string
+    phone: string
+    agreeTerms: boolean
+  }) => {
+    const response = await fetch("http://localhost:5000/api/clinic/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    })
+    const resData = await response.json()
+    if (!response.ok) {
+      throw new Error(resData.message || "Failed to register clinic")
+    }
+    persistSession(resData)
     return resData
   }
 
@@ -99,6 +298,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         dob: data.dob,
         phone: data.phone,
         agreeTerms: data.agreeTerms,
+        role: data.role || "patient",
+        category: data.category || null,
+        education: data.education || null,
+        experience: data.experience || 0,
       }),
     })
 
@@ -108,80 +311,81 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       throw new Error(resData.message || "Failed to create account")
     }
 
-    setToken(resData.token)
-    setUser(resData.user)
-    localStorage.setItem("medigo_token", resData.token)
-    localStorage.setItem("medigo_refresh_token", resData.refreshToken)
-    localStorage.setItem("medigo_user", JSON.stringify(resData.user))
+    // If 2FA OTP is required, stop here and let frontend component handle it
+    if (resData.requireOTP) {
+      return resData
+    }
+
+    persistSession(resData)
+    return resData
+  }
+
+  const verifyOTP = async (email: string, otp: string, purpose: string) => {
+    const response = await fetch("http://localhost:5000/api/auth/verify-otp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email, otp, purpose }),
+    })
+
+    const resData = await response.json()
+
+    if (!response.ok) {
+      throw new Error(resData.message || "Failed to verify verification code")
+    }
+
+    persistSession(resData)
+    return resData
+  }
+
+  const resendOTP = async (email: string) => {
+    const response = await fetch("http://localhost:5000/api/auth/resend-otp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email }),
+    })
+
+    const resData = await response.json()
+
+    if (!response.ok) {
+      throw new Error(resData.message || "Failed to resend code")
+    }
 
     return resData
   }
 
-  const signOut = () => {
+  const signOut = async () => {
+    const storedRefreshToken = localStorage.getItem("medigo_refresh_token")
+    if (storedRefreshToken) {
+      try {
+        await fetch("http://localhost:5000/api/auth/logout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ refreshToken: storedRefreshToken }),
+        })
+      } catch (e) {
+        console.error("Failed to notify logout to backend:", e)
+      }
+    }
+
     setToken(null)
     setUser(null)
     localStorage.removeItem("medigo_token")
     localStorage.removeItem("medigo_refresh_token")
     localStorage.removeItem("medigo_user")
-    router.push("/signin")
-  }
-
-  // Fetch wrapper that handles auto-token-refresh on 401 responses
-  const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
-    let currentToken = token || localStorage.getItem("medigo_token")
-
-    const headers = {
-      ...options.headers,
-      "Content-Type": "application/json",
-    } as Record<string, string>
-
-    if (currentToken) {
-      headers["Authorization"] = `Bearer ${currentToken}`
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current)
     }
-
-    let response = await fetch(url, { ...options, headers })
-
-    if (response.status === 401) {
-      const storedRefreshToken = localStorage.getItem("medigo_refresh_token")
-      if (storedRefreshToken) {
-        try {
-          const refreshRes = await fetch("http://localhost:5000/api/auth/refresh", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ refreshToken: storedRefreshToken }),
-          })
-
-          if (refreshRes.ok) {
-            const refreshData = await refreshRes.ok ? await refreshRes.json() : null
-            if (refreshData && refreshData.token) {
-              const newAccessToken = refreshData.token
-              const newRefreshToken = refreshData.refreshToken || storedRefreshToken
-
-              setToken(newAccessToken)
-              localStorage.setItem("medigo_token", newAccessToken)
-              localStorage.setItem("medigo_refresh_token", newRefreshToken)
-
-              // Retry the original request with the new access token
-              headers["Authorization"] = `Bearer ${newAccessToken}`
-              response = await fetch(url, { ...options, headers })
-            } else {
-              signOut()
-            }
-          } else {
-            signOut()
-          }
-        } catch (err) {
-          console.error("Error during auto-token-refresh:", err)
-          signOut()
-        }
-      } else {
-        signOut()
-      }
+    if (pathname.startsWith("/clinic")) {
+      router.push("/clinic/signin")
+    } else {
+      router.push("/signin")
     }
-
-    return response
   }
 
   return (
@@ -193,8 +397,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         isLoading,
         signIn,
         signUp,
-        signOut,
-        fetchWithAuth,
+        clinicSignIn,
+        clinicSignUp,
+        verifyOTP,
+        resendOTP,
+        signOut
       }}
     >
       {children}

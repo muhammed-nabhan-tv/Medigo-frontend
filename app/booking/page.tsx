@@ -7,28 +7,32 @@ import { Calendar, Clock, Video, Home as HomeIcon, CheckCircle2, User, ChevronRi
 import { useAuth } from "@/context/AuthContext"
 
 interface Doctor {
-  id: string
-  name: string
-  specialty: string
+  _id: string
+  fullName: string
+  category: string
   experience: number
   rating: number
-  availability: string
-  avatarColor: string
+  education: string
+  availableDays?: string[]
+  availableSlots?: string[]
 }
-
-const DOCTORS: Doctor[] = [
-  { id: "doc-1", name: "Dr. Sarah Jenkins, MD", specialty: "General Medicine", experience: 14, rating: 4.9, availability: "Today 3:00 PM", avatarColor: "bg-emerald-600" },
-  { id: "doc-2", name: "Dr. Michael Chang, MD", specialty: "Pediatrics", experience: 12, rating: 4.8, availability: "Tomorrow 9:30 AM", avatarColor: "bg-blue-600" },
-  { id: "doc-3", name: "Dr. Elena Rostova, MD", specialty: "Cardiology", experience: 16, rating: 4.95, availability: "Monday 11:00 AM", avatarColor: "bg-red-600" },
-  { id: "doc-4", name: "Dr. James Carter, MD", specialty: "Dermatology", experience: 8, rating: 4.7, availability: "Today 4:30 PM", avatarColor: "bg-amber-600" },
-  { id: "doc-5", name: "Dr. Maya Lin, PhD", specialty: "Neurology", experience: 15, rating: 4.9, availability: "Tuesday 2:00 PM", avatarColor: "bg-purple-600" },
-]
 
 const SPECIALTIES = ["General Medicine", "Pediatrics", "Cardiology", "Dermatology", "Neurology"]
 const TIMESLOTS = ["09:00 AM", "10:00 AM", "11:30 AM", "01:30 PM", "02:00 PM", "03:30 PM", "04:30 PM"]
 
+const getAvatarColor = (specialty: string) => {
+  switch (specialty) {
+    case "General Medicine": return "bg-emerald-600"
+    case "Cardiology": return "bg-red-600"
+    case "Pediatrics": return "bg-blue-600"
+    case "Dermatology": return "bg-amber-600"
+    case "Neurology": return "bg-purple-600"
+    default: return "bg-slate-600"
+  }
+}
+
 export default function BookingPage() {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const router = useRouter()
 
   const [step, setStep] = useState(1)
@@ -40,12 +44,36 @@ export default function BookingPage() {
   const [reason, setReason] = useState("")
   const [symptoms, setSymptoms] = useState("")
 
+  const [doctorsList, setDoctorsList] = useState<Doctor[]>([])
+  const [isLoadingDoctors, setIsLoadingDoctors] = useState(true)
   const [errorMsg, setErrorMsg] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Fetch verified doctors list
+  React.useEffect(() => {
+    const fetchDoctors = async () => {
+      try {
+        const res = await fetch("http://localhost:5000/api/auth/doctors")
+        if (res.ok) {
+          const data = await res.json()
+          setDoctorsList(data)
+        } else {
+          setErrorMsg("Could not fetch practitioner directory.")
+        }
+      } catch (err) {
+        console.error("Fetch doctors failed:", err)
+        setErrorMsg("Network error loading physician list.")
+      } finally {
+        setIsLoadingDoctors(false)
+      }
+    }
+    fetchDoctors()
+  }, [])
 
   // Filter doctors by specialty
   const filteredDoctors = selectedSpecialty
-    ? DOCTORS.filter((doc) => doc.specialty === selectedSpecialty)
-    : DOCTORS
+    ? doctorsList.filter((doc) => doc.category === selectedSpecialty)
+    : doctorsList
 
   const handleNextStep = () => {
     setErrorMsg("")
@@ -69,40 +97,44 @@ export default function BookingPage() {
     setStep((prev) => Math.max(prev - 1, 1))
   }
 
-  const handleConfirmBooking = (e: React.FormEvent) => {
+  const handleConfirmBooking = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!reason.trim()) {
       setErrorMsg("Please summarize the reason for your visit.")
       return
     }
 
-    if (!user || !selectedDoctor) return
+    if (!user || !selectedDoctor || !token) return
 
-    const newAppointment = {
-      id: `app-${Date.now()}`,
-      doctorName: selectedDoctor.name,
-      specialty: selectedDoctor.specialty,
-      date: selectedDate,
-      time: selectedTime,
-      reason: reason,
-      type: consultType,
-      status: "Confirmed",
-    }
+    setIsSubmitting(true)
+    setErrorMsg("")
+    try {
+      const response = await fetch("http://localhost:5000/api/appointments", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          doctorId: selectedDoctor._id,
+          date: selectedDate,
+          time: selectedTime,
+          type: consultType,
+          reason: reason,
+        }),
+      })
 
-    // Save to localStorage
-    const stored = localStorage.getItem(`medigo_appointments_${user.id}`)
-    let appointmentsList = []
-    if (stored) {
-      try {
-        appointmentsList = JSON.parse(stored)
-      } catch (e) {
-        console.error("Error loading existing appointments:", e)
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to confirm scheduled appointment")
       }
-    }
-    appointmentsList.unshift(newAppointment)
-    localStorage.setItem(`medigo_appointments_${user.id}`, JSON.stringify(appointmentsList))
 
-    setStep(4)
+      setStep(4)
+    } catch (err: any) {
+      setErrorMsg(err.message || "Something went wrong confirming your slot.")
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -201,37 +233,41 @@ export default function BookingPage() {
                     </div>
                   ) : (
                     <div className="grid gap-4 sm:grid-cols-2">
-                      {filteredDoctors.map((doc) => (
-                        <div
-                          key={doc.id}
-                          onClick={() => setSelectedDoctor(doc)}
-                          className={`bg-white dark:bg-slate-900 border p-5 rounded-2xl flex flex-col justify-between cursor-pointer transition-all duration-200 ${
-                            selectedDoctor?.id === doc.id
-                              ? "border-emerald-600 ring-2 ring-emerald-600/10 dark:border-emerald-500 dark:ring-emerald-500/10"
-                              : "border-slate-200/60 dark:border-slate-800 hover:border-emerald-500/60"
-                          }`}
-                        >
-                          <div className="flex gap-4">
-                            <div className={`h-12 w-12 shrink-0 rounded-full ${doc.avatarColor} text-white flex items-center justify-center font-bold text-lg`}>
-                              {doc.name.split(" ")[1][0]}
-                            </div>
-                            <div className="space-y-1">
-                              <h4 className="font-bold text-slate-900 dark:text-white leading-snug">{doc.name}</h4>
-                              <p className="text-xs text-emerald-600 font-semibold">{doc.specialty}</p>
-                              <div className="flex items-center gap-1 text-slate-450">
-                                <Star className="h-3.5 w-3.5 fill-amber-450 text-amber-450" />
-                                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{doc.rating}</span>
-                                <span className="text-[10px] text-slate-400">({doc.experience} yrs exp)</span>
+                      {filteredDoctors.map((doc) => {
+                        const avatarColor = getAvatarColor(doc.category);
+                        const initials = doc.fullName.replace("Dr. ", "").trim()[0] || "D";
+                        return (
+                          <div
+                            key={doc._id}
+                            onClick={() => setSelectedDoctor(doc)}
+                            className={`bg-white dark:bg-slate-900 border p-5 rounded-2xl flex flex-col justify-between cursor-pointer transition-all duration-200 ${
+                              selectedDoctor?._id === doc._id
+                                ? "border-emerald-600 ring-2 ring-emerald-600/10 dark:border-emerald-500 dark:ring-emerald-500/10"
+                                : "border-slate-200/60 dark:border-slate-800 hover:border-emerald-500/60"
+                            }`}
+                          >
+                            <div className="flex gap-4">
+                              <div className={`h-12 w-12 shrink-0 rounded-full ${avatarColor} text-white flex items-center justify-center font-bold text-lg`}>
+                                {initials}
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="font-bold text-slate-900 dark:text-white leading-snug">{doc.fullName}</h4>
+                                <p className="text-xs text-emerald-600 font-semibold">{doc.category}</p>
+                                <div className="flex items-center gap-1 text-slate-450">
+                                  <Star className="h-3.5 w-3.5 fill-amber-450 text-amber-450" />
+                                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{doc.rating}</span>
+                                  <span className="text-[10px] text-slate-400">({doc.experience} yrs exp)</span>
+                                </div>
                               </div>
                             </div>
-                          </div>
 
-                          <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-xs text-slate-500 dark:text-slate-400">
-                            <span>Next Available:</span>
-                            <span className="font-bold text-emerald-600 dark:text-emerald-500">{doc.availability}</span>
+                            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-xs text-slate-500 dark:text-slate-400">
+                              <span>Education:</span>
+                              <span className="font-semibold text-slate-650 dark:text-slate-300 truncate max-w-[150px]">{doc.education}</span>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -259,12 +295,12 @@ export default function BookingPage() {
                 className="space-y-6"
               >
                 <div className="bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/80 p-5 rounded-2xl flex items-center gap-4">
-                  <div className={`h-10 w-10 rounded-full ${selectedDoctor?.avatarColor} text-white flex items-center justify-center font-bold`}>
-                    {selectedDoctor?.name.split(" ")[1][0]}
+                  <div className={`h-10 w-10 rounded-full ${getAvatarColor(selectedDoctor?.category || "")} text-white flex items-center justify-center font-bold`}>
+                    {selectedDoctor?.fullName.replace("Dr. ", "").trim()[0] || "D"}
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">{selectedDoctor?.name}</h4>
-                    <p className="text-xs text-emerald-600 font-semibold">{selectedDoctor?.specialty}</p>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">{selectedDoctor?.fullName}</h4>
+                    <p className="text-xs text-emerald-600 font-semibold">{selectedDoctor?.category}</p>
                   </div>
                 </div>
 
@@ -285,7 +321,7 @@ export default function BookingPage() {
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-450 uppercase tracking-wider block">Select Available Timeslot</label>
                   <div className="grid gap-2 grid-cols-3 sm:grid-cols-4">
-                    {TIMESLOTS.map((t) => (
+                    {(selectedDoctor?.availableSlots && selectedDoctor.availableSlots.length > 0 ? selectedDoctor.availableSlots : TIMESLOTS).map((t) => (
                       <button
                         key={t}
                         type="button"
@@ -333,12 +369,12 @@ export default function BookingPage() {
               >
                 <div className="bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/80 p-5 rounded-2xl flex flex-wrap justify-between items-center gap-4 text-xs">
                   <div className="flex items-center gap-3">
-                    <div className={`h-8 w-8 rounded-full ${selectedDoctor?.avatarColor} text-white flex items-center justify-center font-bold`}>
-                      {selectedDoctor?.name.split(" ")[1][0]}
+                    <div className={`h-8 w-8 rounded-full ${getAvatarColor(selectedDoctor?.category || "")} text-white flex items-center justify-center font-bold text-sm`}>
+                      {selectedDoctor?.fullName?.replace("Dr. ", "").trim()[0] || "D"}
                     </div>
                     <div>
-                      <h4 className="font-bold text-slate-900 dark:text-white">{selectedDoctor?.name}</h4>
-                      <p className="text-[10px] text-emerald-600 font-semibold">{selectedDoctor?.specialty}</p>
+                      <h4 className="font-bold text-slate-900 dark:text-white">{selectedDoctor?.fullName}</h4>
+                      <p className="text-[10px] text-emerald-600 font-semibold">{selectedDoctor?.category}</p>
                     </div>
                   </div>
                   <div className="text-right text-slate-500 dark:text-slate-400 font-medium">
@@ -450,7 +486,7 @@ export default function BookingPage() {
                 <div className="bg-slate-50 dark:bg-slate-800/20 border border-slate-100 dark:border-slate-800 p-5 rounded-2xl max-w-md mx-auto text-left space-y-3">
                   <div className="flex justify-between items-center text-xs border-b border-slate-200/50 dark:border-slate-800/50 pb-2 mb-2">
                     <span className="text-slate-400">Practitioner</span>
-                    <span className="font-bold text-slate-800 dark:text-slate-250">{selectedDoctor?.name}</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-250">{selectedDoctor?.fullName}</span>
                   </div>
                   <div className="flex justify-between items-center text-xs border-b border-slate-200/50 dark:border-slate-800/50 pb-2 mb-2">
                     <span className="text-slate-400">Date & Time</span>

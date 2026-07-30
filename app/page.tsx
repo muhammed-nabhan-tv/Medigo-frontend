@@ -24,7 +24,8 @@ import {
 import { useAuth } from "@/context/AuthContext"
 
 interface Appointment {
-  id: string
+  id?: string
+  _id?: string
   doctorName: string
   specialty: string
   date: string
@@ -35,7 +36,7 @@ interface Appointment {
 }
 
 export default function Home() {
-  const { user, isAuthenticated, signOut } = useAuth()
+  const { user, isAuthenticated, signOut, token } = useAuth()
   const router = useRouter()
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [showLogModal, setShowLogModal] = useState(false)
@@ -52,41 +53,50 @@ export default function Home() {
   })
   const [metricSuccess, setMetricSuccess] = useState("")
 
-  // Load appointments from localStorage
+  // Load appointments from backend API
   useEffect(() => {
-    if (user) {
-      const stored = localStorage.getItem(`medigo_appointments_${user.id}`)
-      if (stored) {
+    if (user && token) {
+      const fetchAppointments = async () => {
         try {
-          setAppointments(JSON.parse(stored))
+          const res = await fetch("http://localhost:5000/api/appointments/patient", {
+            headers: {
+              "Authorization": `Bearer ${token}`
+            }
+          })
+          if (res.ok) {
+            const data = await res.json()
+            setAppointments(data)
+          } else {
+            console.error("Failed to fetch appointments from backend")
+          }
         } catch (e) {
           console.error("Error loading appointments:", e)
         }
-      } else {
-        // Mock default appointment if none exists
-        const mockAppointments: Appointment[] = [
-          {
-            id: "mock-1",
-            doctorName: "Dr. Sarah Jenkins",
-            specialty: "General Medicine",
-            date: "2026-08-10",
-            time: "10:00 AM",
-            reason: "Annual physical checkup",
-            type: "Video Consultation",
-            status: "Confirmed"
-          }
-        ]
-        localStorage.setItem(`medigo_appointments_${user.id}`, JSON.stringify(mockAppointments))
-        setAppointments(mockAppointments)
       }
+      fetchAppointments()
     }
-  }, [user])
+  }, [user, token])
 
-  const handleCancelAppointment = (id: string) => {
-    if (!user) return
-    const updated = appointments.filter((app) => app.id !== id)
-    setAppointments(updated)
-    localStorage.setItem(`medigo_appointments_${user.id}`, JSON.stringify(updated))
+  const handleCancelAppointment = async (id: string) => {
+    if (!user || !token) return
+    try {
+      const res = await fetch(`http://localhost:5000/api/appointments/${id}/status`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: "Cancelled" })
+      })
+      if (res.ok) {
+        setAppointments((prev) => prev.filter((app) => (app._id || app.id) !== id))
+      } else {
+        const errorData = await res.json()
+        console.error("Failed to cancel appointment:", errorData.message)
+      }
+    } catch (e) {
+      console.error("Error cancelling appointment:", e)
+    }
   }
 
   const handleLogMetrics = (e: React.FormEvent) => {
@@ -492,46 +502,49 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="space-y-4 max-h-[360px] overflow-y-auto pr-1">
-                    {appointments.map((app) => (
-                      <div
-                        key={app.id}
-                        className="bg-slate-50 dark:bg-slate-800/20 border border-slate-100 dark:border-slate-800/80 p-4 rounded-2xl space-y-3 relative group"
-                      >
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <h4 className="text-sm font-bold text-slate-900 dark:text-white">{app.doctorName}</h4>
-                            <p className="text-xs text-emerald-600 font-semibold">{app.specialty}</p>
+                    {appointments.map((app) => {
+                      const appId = app._id || app.id || "";
+                      return (
+                        <div
+                          key={appId}
+                          className="bg-slate-50 dark:bg-slate-800/20 border border-slate-100 dark:border-slate-800/80 p-4 rounded-2xl space-y-3 relative group"
+                        >
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h4 className="text-sm font-bold text-slate-900 dark:text-white">{app.doctorName}</h4>
+                              <p className="text-xs text-emerald-600 font-semibold">{app.specialty}</p>
+                            </div>
+                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:text-emerald-450 dark:bg-emerald-950/20 px-2 py-0.5 rounded-full">
+                              {app.status}
+                            </span>
                           </div>
-                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:text-emerald-450 dark:bg-emerald-950/20 px-2 py-0.5 rounded-full">
-                            {app.status}
-                          </span>
-                        </div>
 
-                        <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
-                          <p className="flex items-center gap-1.5">
-                            <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                            {app.date}
-                          </p>
-                          <p className="flex items-center gap-1.5">
-                            <Clock className="h-3.5 w-3.5 text-slate-400" />
-                            {app.time} ({app.type})
-                          </p>
-                        </div>
+                          <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                            <p className="flex items-center gap-1.5">
+                              <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                              {app.date}
+                            </p>
+                            <p className="flex items-center gap-1.5">
+                              <Clock className="h-3.5 w-3.5 text-slate-400" />
+                              {app.time} ({app.type})
+                            </p>
+                          </div>
 
-                        <div className="flex justify-between items-center border-t border-slate-200/50 dark:border-slate-800/60 pt-3">
-                          <span className="text-[10px] font-medium text-slate-450 truncate max-w-[150px]">
-                            Reason: {app.reason}
-                          </span>
-                          <button
-                            onClick={() => handleCancelAppointment(app.id)}
-                            className="text-red-500 hover:text-red-750 transition-colors p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/25 cursor-pointer"
-                            title="Cancel appointment"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          <div className="flex justify-between items-center border-t border-slate-200/50 dark:border-slate-800/60 pt-3">
+                            <span className="text-[10px] font-medium text-slate-450 truncate max-w-[150px]">
+                              Reason: {app.reason}
+                            </span>
+                            <button
+                              onClick={() => handleCancelAppointment(appId)}
+                              className="text-red-500 hover:text-red-750 transition-colors p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/25 cursor-pointer"
+                              title="Cancel appointment"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

@@ -20,7 +20,7 @@ import { useAuth } from "@/context/AuthContext"
 const signUpSchema = z.object({
   fullName: z
     .string()
-    .min(2, { message: "Full Name must be at least 2 characters" }),
+    .min(2, { message: "Name must be at least 2 characters" }),
   email: z
     .string()
     .min(1, { message: "Email is required" })
@@ -30,13 +30,24 @@ const signUpSchema = z.object({
     .min(8, { message: "Password must be at least 8 characters" }),
   dob: z
     .string()
-    .min(1, { message: "Date of Birth is required" }),
+    .optional(),
   phone: z
     .string()
     .min(10, { message: "Please enter a valid phone number" }),
   agreeTerms: z.boolean().refine((val) => val === true, {
     message: "You must authorize the HIPAA and Privacy Policy terms to continue.",
   }),
+  role: z.enum(["patient", "doctor", "clinic"]),
+  category: z.string().optional(),
+  education: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.role === "patient" && !data.dob) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Date of Birth is required",
+      path: ["dob"],
+    });
+  }
 })
 
 type SignUpFormValues = z.infer<typeof signUpSchema>
@@ -47,7 +58,16 @@ export default function SignUpPage() {
   const [successMsg, setSuccessMsg] = React.useState("")
   const [errorMsg, setErrorMsg] = React.useState("")
   const [passwordValue, setPasswordValue] = React.useState("")
-  const { signUp } = useAuth()
+
+  // OTP 2FA States
+  const [showOTPVerify, setShowOTPVerify] = React.useState(false)
+  const [otpEmail, setOtpEmail] = React.useState("")
+  const [phoneObfuscated, setPhoneObfuscated] = React.useState("")
+  const [debugOtp, setDebugOtp] = React.useState("")
+  const [otpCode, setOtpCode] = React.useState("")
+  const [isVerifying, setIsVerifying] = React.useState(false)
+
+  const { signUp, verifyOTP, resendOTP, clinicSignUp } = useAuth()
   const router = useRouter()
   const {
     register,
@@ -65,12 +85,16 @@ export default function SignUpPage() {
       dob: "",
       phone: "",
       agreeTerms: false,
+      role: "patient" as const,
+      category: "",
+      education: "",
     },
     mode: "onTouched",
   })
 
-  // Watch password field for real-time strength meter
+  // Watch password and role fields
   const password = watch("password")
+  const watchRole = watch("role", "patient")
   React.useEffect(() => {
     setPasswordValue(password || "")
   }, [password])
@@ -121,21 +145,91 @@ export default function SignUpPage() {
     setSuccessMsg("")
     setErrorMsg("")
     try {
-      await signUp({
-        fullName: data.fullName,
-        email: data.email,
-        password: data.password,
-        dob: data.dob,
-        phone: data.phone,
-        agreeTerms: data.agreeTerms,
-      })
-      setSuccessMsg("Account successfully created!")
-      router.push('/signin')
-      
+      if (data.role === "clinic") {
+        await clinicSignUp({
+          clinicName: data.fullName,
+          email: data.email,
+          password: data.password,
+          phone: data.phone,
+          agreeTerms: data.agreeTerms,
+        })
+        setSuccessMsg("Clinic registered successfully! Redirecting...")
+        setTimeout(() => {
+          router.push("/clinic")
+        }, 1000)
+      } else {
+        const res = await signUp({
+          fullName: data.fullName,
+          email: data.email,
+          password: data.password,
+          dob: data.dob,
+          phone: data.phone,
+          agreeTerms: data.agreeTerms,
+          role: data.role,
+          category: data.category || null,
+          education: data.education || null,
+        })
+        
+        if (res && res.requireOTP) {
+          setOtpEmail(res.email)
+          setPhoneObfuscated(res.phoneObfuscated || "")
+          if (res.debugOtp) {
+            setDebugOtp(res.debugOtp)
+          } else {
+            setDebugOtp("")
+          }
+          setShowOTPVerify(true)
+          setSuccessMsg("Verification code sent to your registered phone!")
+        } else {
+          setSuccessMsg("Account successfully created!")
+          router.push('/signin')
+        }
+      }
     } catch (error: any) {
       setErrorMsg(error.message || "An unexpected error occurred")
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleVerifyOTP = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (otpCode.length !== 6) {
+      setErrorMsg("Please enter a valid 6-digit code")
+      return
+    }
+    setIsVerifying(true)
+    setErrorMsg("")
+    setSuccessMsg("")
+    try {
+      await verifyOTP(otpEmail, otpCode, "register")
+      setSuccessMsg("Verification successful! Logging in...")
+      setTimeout(() => {
+        router.push("/")
+      }, 1000)
+    } catch (error: any) {
+      setErrorMsg(error.message || "Invalid or expired verification code")
+    } finally {
+      setIsVerifying(false)
+    }
+  }
+
+  const handleResendOTP = async () => {
+    setIsVerifying(true)
+    setErrorMsg("")
+    setSuccessMsg("")
+    try {
+      const res = await resendOTP(otpEmail)
+      setSuccessMsg("A new verification code has been sent!")
+      if (res && res.debugOtp) {
+        setDebugOtp(res.debugOtp)
+      } else {
+        setDebugOtp("")
+      }
+    } catch (error: any) {
+      setErrorMsg(error.message || "Failed to resend code")
+    } finally {
+      setIsVerifying(false)
     }
   }
 
@@ -228,225 +322,389 @@ export default function SignUpPage() {
       <div className="flex w-full items-center justify-center px-4 py-12 lg:w-1/2 sm:px-6 lg:px-16 bg-white dark:bg-slate-900">
         <div className="w-full max-w-[460px] space-y-8 animate-fade-in-up">
           {/* Header */}
-          <div className="space-y-2">
-            {/* Logo on mobile only */}
-            <div className="flex lg:hidden items-center gap-2 mb-6">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-md shadow-emerald-600/20">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-5 w-5"
-                >
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
+          {!showOTPVerify && (
+            <div className="space-y-2">
+              {/* Logo on mobile only */}
+              <div className="flex lg:hidden items-center gap-2 mb-6">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-md shadow-emerald-600/20">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-5 w-5"
+                  >
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </div>
+                <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+                  Medi<span className="text-emerald-600">go</span>
+                </span>
               </div>
-              <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
-                Medi<span className="text-emerald-600">go</span>
-              </span>
-            </div>
 
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-              Create your health profile
-            </h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Already have an account?{" "}
-              <Link
-                href="/signin"
-                className="font-semibold text-emerald-600 hover:text-emerald-700 transition-colors focus-visible:outline-none focus-visible:underline"
-              >
-                Log in
-              </Link>
-            </p>
-          </div>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+                Create your health profile
+              </h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Already have an account?{" "}
+                <Link
+                  href="/signin"
+                  className="font-semibold text-emerald-600 hover:text-emerald-700 transition-colors focus-visible:outline-none focus-visible:underline"
+                >
+                  Log in
+                </Link>
+              </p>
+            </div>
+          )}
 
           {/* Stepper Progress Bar */}
-          <div className="space-y-2">
-            <div className="flex justify-between items-center text-xs font-semibold text-slate-500 dark:text-slate-400">
-              <span>STEP {step} OF 2</span>
-              <span>{step === 1 ? "Account Credentials" : "Basic Identification"}</span>
+          {!showOTPVerify && (
+            <div className="space-y-2">
+              <div className="flex justify-between items-center text-xs font-semibold text-slate-500 dark:text-slate-400">
+                <span>STEP {step} OF 2</span>
+                <span>{step === 1 ? "Account Credentials" : "Basic Identification"}</span>
+              </div>
+              <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-600 transition-all duration-300 ease-in-out"
+                  style={{ width: step === 1 ? "50%" : "100%" }}
+                />
+              </div>
             </div>
-            <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-emerald-600 transition-all duration-300 ease-in-out"
-                style={{ width: step === 1 ? "50%" : "100%" }}
-              />
-            </div>
-          </div>
+          )}
 
           {/* Multi-step Form Content */}
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-            {successMsg && (
-              <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-3 text-sm font-medium text-emerald-800 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/30 animate-fade-in">
-                {successMsg}
+          {showOTPVerify ? (
+            <form onSubmit={handleVerifyOTP} className="space-y-6">
+              <div className="text-center space-y-2">
+                <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Verify Your Identity</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  We've sent a 6-digit verification code to your phone number ending in <span className="font-semibold text-slate-700 dark:text-slate-200">{phoneObfuscated || "digits"}</span>.
+                </p>
               </div>
-            )}
-            {errorMsg && (
-              <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-3 text-sm font-medium text-red-800 dark:text-red-300 border border-red-100 dark:border-red-900/30 animate-fade-in" role="alert">
-                {errorMsg}
-              </div>
-            )}
 
-            <AnimatePresence mode="wait">
-              {step === 1 && (
-                <motion.div
-                  key="step1"
-                  initial={{ x: -20, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: 20, opacity: 0 }}
-                  transition={{ duration: 0.25, ease: "easeInOut" }}
-                  className="space-y-5"
+              {successMsg && (
+                <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-3 text-sm font-medium text-emerald-800 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/30 animate-fade-in">
+                  {successMsg}
+                </div>
+              )}
+              {errorMsg && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-3 text-sm font-medium text-red-800 dark:text-red-300 border border-red-100 dark:border-red-900/30 animate-fade-in" role="alert">
+                  {errorMsg}
+                </div>
+              )}
+
+              {debugOtp && (
+                <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 p-3 text-xs font-semibold text-amber-800 dark:text-amber-300 border border-amber-200/50 dark:border-amber-900/30 text-center animate-pulse">
+                  Debug Verification Code: <span className="font-mono text-sm underline select-all">{debugOtp}</span>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label htmlFor="otp" className="text-xs font-bold uppercase tracking-wider text-slate-450 dark:text-slate-550 block text-center">
+                  6-Digit OTP Code
+                </label>
+                <input
+                  id="otp"
+                  type="text"
+                  pattern="\d*"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="000000"
+                  disabled={isVerifying}
+                  className="w-full text-center text-3xl font-mono tracking-[0.5em] pl-[0.25em] h-14 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all font-semibold"
+                  required
+                />
+              </div>
+
+              <div className="flex flex-col gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={isVerifying || otpCode.length !== 6}
+                  className="flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-600/10 transition-all duration-150 hover:bg-emerald-700 hover:shadow-emerald-700/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer select-none"
                 >
-                  <Input
-                    id="fullName"
-                    type="text"
-                    label="Full Name"
-                    placeholder="John Doe"
-                    autoComplete="name"
-                    error={errors.fullName?.message}
-                    disabled={isLoading}
-                    {...register("fullName")}
-                  />
+                  {isVerifying ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Verifying...
+                    </>
+                  ) : (
+                    "Verify & Complete Registration"
+                  )}
+                </button>
 
-                  <Input
-                    id="email"
-                    type="email"
-                    label="Email Address"
-                    placeholder="name@example.com"
-                    autoComplete="email"
-                    error={errors.email?.message}
-                    disabled={isLoading}
-                    {...register("email")}
-                  />
-
-                  <div className="space-y-2">
-                    <PasswordInput
-                      id="password"
-                      label="Password"
-                      placeholder="••••••••"
-                      autoComplete="new-password"
-                      error={errors.password?.message}
-                      disabled={isLoading}
-                      {...register("password")}
-                    />
-
-                    {/* Password Strength Meter */}
-                    <div className="space-y-1.5 pt-1.5">
-                      <div className="flex justify-between items-center text-xs font-semibold">
-                        <span className="text-slate-500">Password Strength</span>
-                        <span className={score === 0 ? "text-slate-400" : score <= 2 ? "text-amber-500" : "text-emerald-600"}>
-                          {strength.label}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-4 gap-1.5 h-1">
-                        {[1, 2, 3, 4].map((barIndex) => (
-                          <div
-                            key={barIndex}
-                            className={`h-full rounded-full transition-all duration-300 ${
-                              barIndex <= score ? strength.color : "bg-slate-200 dark:bg-slate-800"
-                            }`}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  </div>
+                <div className="flex items-center justify-between text-xs px-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOTPVerify(false)
+                      setErrorMsg("")
+                      setSuccessMsg("")
+                      setOtpCode("")
+                    }}
+                    disabled={isVerifying}
+                    className="font-semibold text-slate-500 hover:text-slate-750 transition-colors cursor-pointer bg-transparent border-0"
+                  >
+                    Back to registration
+                  </button>
 
                   <button
                     type="button"
-                    onClick={handleContinue}
-                    disabled={isLoading}
-                    className="flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-md hover:bg-slate-800 active:scale-[0.98] transition-all select-none cursor-pointer dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
+                    onClick={handleResendOTP}
+                    disabled={isVerifying}
+                    className="font-semibold text-emerald-600 hover:text-emerald-750 transition-colors cursor-pointer bg-transparent border-0"
                   >
-                    Continue to profile
-                    <ArrowRight className="ml-2 h-4 w-4" />
+                    Resend code
                   </button>
-                </motion.div>
+                </div>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+              {successMsg && (
+                <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-3 text-sm font-medium text-emerald-800 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/30 animate-fade-in">
+                  {successMsg}
+                </div>
+              )}
+              {errorMsg && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-3 text-sm font-medium text-red-800 dark:text-red-300 border border-red-100 dark:border-red-900/30 animate-fade-in" role="alert">
+                  {errorMsg}
+                </div>
               )}
 
-              {step === 2 && (
-                <motion.div
-                  key="step2"
-                  initial={{ x: 20, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: -20, opacity: 0 }}
-                  transition={{ duration: 0.25, ease: "easeInOut" }}
-                  className="space-y-5"
-                >
-                  <DatePicker
-                    id="dob"
-                    label="Date of Birth"
-                    error={errors.dob?.message}
-                    disabled={isLoading}
-                    {...register("dob")}
-                  />
-
-                  <Input
-                    id="phone"
-                    type="tel"
-                    label="Phone Number"
-                    placeholder="(555) 000-0000"
-                    autoComplete="tel"
-                    error={errors.phone?.message}
-                    disabled={isLoading}
-                    {...register("phone")}
-                  />
-
-                  {/* HIPAA checkbox terms */}
-                  <div className="space-y-2">
-                    <div className="flex items-start space-x-2.5">
-                      <Checkbox
-                        id="agreeTerms"
-                        onCheckedChange={(checked) => {
-                          setValue("agreeTerms", !!checked, { shouldValidate: true })
-                        }}
-                        disabled={isLoading}
-                      />
-                      <label
-                        htmlFor="agreeTerms"
-                        className="text-sm font-medium text-slate-600 dark:text-slate-400 cursor-pointer select-none leading-tight"
-                      >
-                        I agree to the Patient Privacy Policy and HIPAA Authorization terms.
-                      </label>
+              <AnimatePresence mode="wait">
+                {step === 1 && (
+                  <motion.div
+                    key="step1"
+                    initial={{ x: -20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    exit={{ x: 20, opacity: 0 }}
+                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                    className="space-y-5"
+                  >
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-550">I am registering as a</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setValue("role", "patient")}
+                          className={`py-3 px-1 rounded-xl border text-xs font-bold transition-all select-none cursor-pointer text-center ${
+                            watchRole === "patient"
+                              ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                              : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                          }`}
+                        >
+                          Patient
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setValue("role", "doctor")}
+                          className={`py-3 px-1 rounded-xl border text-xs font-bold transition-all select-none cursor-pointer text-center ${
+                            watchRole === "doctor"
+                              ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                              : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                          }`}
+                        >
+                          Practitioner
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setValue("role", "clinic")}
+                          className={`py-3 px-1 rounded-xl border text-xs font-bold transition-all select-none cursor-pointer text-center ${
+                            watchRole === "clinic"
+                              ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                              : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                          }`}
+                        >
+                          Clinic
+                        </button>
+                      </div>
                     </div>
-                    {errors.agreeTerms && (
-                      <p className="text-xs font-medium text-red-600 dark:text-red-400 transition-all animate-fade-in" role="alert">
-                        {errors.agreeTerms.message}
-                      </p>
-                    )}
-                  </div>
 
-                  <div className="flex gap-3 pt-2">
+                    <Input
+                      id="fullName"
+                      type="text"
+                      label={watchRole === "clinic" ? "Clinic Name" : "Full Name"}
+                      placeholder={watchRole === "clinic" ? "City Care Clinic" : watchRole === "doctor" ? "Dr. Jane Doe" : "John Doe"}
+                      autoComplete="name"
+                      error={errors.fullName?.message}
+                      disabled={isLoading}
+                      {...register("fullName")}
+                    />
+
+                    <Input
+                      id="email"
+                      type="email"
+                      label="Email Address"
+                      placeholder="name@example.com"
+                      autoComplete="email"
+                      error={errors.email?.message}
+                      disabled={isLoading}
+                      {...register("email")}
+                    />
+
+                    <div className="space-y-2">
+                      <PasswordInput
+                        id="password"
+                        label="Password"
+                        placeholder="••••••••"
+                        autoComplete="new-password"
+                        error={errors.password?.message}
+                        disabled={isLoading}
+                        {...register("password")}
+                      />
+
+                      {/* Password Strength Meter */}
+                      <div className="space-y-1.5 pt-1.5">
+                        <div className="flex justify-between items-center text-xs font-semibold">
+                          <span className="text-slate-500">Password Strength</span>
+                          <span className={score === 0 ? "text-slate-400" : score <= 2 ? "text-amber-500" : "text-emerald-600"}>
+                            {strength.label}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1.5 h-1">
+                          {[1, 2, 3, 4].map((barIndex) => (
+                            <div
+                              key={barIndex}
+                              className={`h-full rounded-full transition-all duration-300 ${
+                                barIndex <= score ? strength.color : "bg-slate-200 dark:bg-slate-800"
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
                     <button
                       type="button"
-                      onClick={() => setStep(1)}
+                      onClick={handleContinue}
                       disabled={isLoading}
-                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 active:scale-[0.98] transition-all select-none cursor-pointer dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900"
+                      className="flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-md hover:bg-slate-800 active:scale-[0.98] transition-all select-none cursor-pointer dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200"
                     >
-                      <ArrowLeft className="h-4 w-4" />
+                      Continue to profile
+                      <ArrowRight className="ml-2 h-4 w-4" />
                     </button>
-                    <button
-                      type="submit"
+                  </motion.div>
+                )}
+
+                {step === 2 && (
+                  <motion.div
+                    key="step2"
+                    initial={{ x: 20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    exit={{ x: -20, opacity: 0 }}
+                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                    className="space-y-5"
+                  >
+                    {watchRole !== "clinic" && (
+                      <DatePicker
+                        id="dob"
+                        label="Date of Birth"
+                        error={errors.dob?.message}
+                        disabled={isLoading}
+                        {...register("dob")}
+                      />
+                    )}
+
+                    <Input
+                      id="phone"
+                      type="tel"
+                      label="Phone Number"
+                      placeholder="(555) 000-0000"
+                      autoComplete="tel"
+                      error={errors.phone?.message}
                       disabled={isLoading}
-                      className="flex flex-1 items-center justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-600/10 transition-all duration-150 hover:bg-emerald-700 hover:shadow-emerald-700/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 select-none cursor-pointer"
-                    >
-                      {isLoading ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Creating Account...
-                        </>
-                      ) : (
-                        "Create Secure Account"
+                      {...register("phone")}
+                    />
+
+                    {watchRole === "doctor" && (
+                      <>
+                        <div className="space-y-2">
+                          <label htmlFor="category" className="text-xs font-bold uppercase tracking-wider text-slate-450 dark:text-slate-550 block">Medical Specialty (Category)</label>
+                          <select
+                            id="category"
+                            disabled={isLoading}
+                            {...register("category")}
+                            className="w-full px-4 py-3 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all font-semibold"
+                          >
+                            <option value="">Select Specialty</option>
+                            <option value="General Medicine">General Medicine</option>
+                            <option value="Cardiology">Cardiology</option>
+                            <option value="Pediatrics">Pediatrics</option>
+                            <option value="Neurology">Neurology</option>
+                            <option value="Dermatology">Dermatology</option>
+                          </select>
+                        </div>
+
+                        <Input
+                          id="education"
+                          type="text"
+                          label="Medical Degree / Education"
+                          placeholder="e.g. MD, PhD, MBBS"
+                          error={errors.education?.message}
+                          disabled={isLoading}
+                          {...register("education")}
+                        />
+                      </>
+                    )}
+
+                    {/* HIPAA checkbox terms */}
+                    <div className="space-y-2">
+                      <div className="flex items-start space-x-2.5">
+                        <Checkbox
+                          id="agreeTerms"
+                          onCheckedChange={(checked) => {
+                            setValue("agreeTerms", !!checked, { shouldValidate: true })
+                          }}
+                          disabled={isLoading}
+                        />
+                        <label
+                          htmlFor="agreeTerms"
+                          className="text-sm font-medium text-slate-600 dark:text-slate-400 cursor-pointer select-none leading-tight"
+                        >
+                          I agree to the Patient Privacy Policy and HIPAA Authorization terms.
+                        </label>
+                      </div>
+                      {errors.agreeTerms && (
+                        <p className="text-xs font-medium text-red-600 dark:text-red-400 transition-all animate-fade-in" role="alert">
+                          {errors.agreeTerms.message}
+                        </p>
                       )}
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </form>
+                    </div>
+
+                    <div className="flex gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setStep(1)}
+                        disabled={isLoading}
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 active:scale-[0.98] transition-all select-none cursor-pointer dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900"
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isLoading}
+                        className="flex flex-1 items-center justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-600/10 transition-all duration-150 hover:bg-emerald-700 hover:shadow-emerald-700/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 select-none cursor-pointer"
+                      >
+                        {isLoading ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Creating Account...
+                          </>
+                        ) : (
+                          "Create Secure Account"
+                        )}
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </form>
+          )}
         </div>
       </div>
     </div>

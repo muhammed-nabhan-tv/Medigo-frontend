@@ -13,9 +13,9 @@ export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false)
   const [isProfileOpen, setIsProfileOpen] = useState(false)
 
-  // Do not render navbar on auth pages
-  const authPaths = ["/signin", "/signup"]
-  if (authPaths.includes(pathname)) return null
+  // Do not render navbar on auth / clinic portal / set-password pages
+  const authPaths = ["/signin", "/signup", "/clinic/signin", "/clinic/signup", "/set-password"]
+  if (authPaths.includes(pathname) || pathname === "/clinic" || pathname.startsWith("/doctor")) return null
 
   const getInitials = (name: string) => {
     return name
