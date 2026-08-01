@@ -39,6 +39,23 @@ export default function DoctorDashboard() {
   const [errorMsg, setErrorMsg] = useState("")
   const [isLoading, setIsLoading] = useState(true)
 
+  // Prescription Modal States
+  const [selectedApp, setSelectedApp] = useState<Appointment | null>(null)
+  const [showPrescriptionModal, setShowPrescriptionModal] = useState(false)
+  const [prescriptionForm, setPrescriptionForm] = useState({
+    doctorDegree: "MBBS, MD (General Medicine)",
+    clinicName: "Medigo Care Clinic",
+    clinicAddress: "123 Health Avenue, Suite 400",
+    clinicPhone: "+1 (555) 019-2834",
+    patientAge: "30",
+    patientSex: "M",
+    advice: "• Drink plenty of warm water.\n• Adequate rest for 3 days.\n• Follow up if symptoms persist.",
+  })
+  const [medicines, setMedicines] = useState<Array<{ name: string; frequency: string; duration: string; instruction: string }>>([
+    { name: "", frequency: "", duration: "", instruction: "" },
+  ])
+  const [isPrescriptionSubmitting, setIsPrescriptionSubmitting] = useState(false)
+
   // Doctor availability editing states (mock settings)
   const [availableDays, setAvailableDays] = useState<string[]>([])
   const [availableSlots, setAvailableSlots] = useState<string[]>([])
@@ -49,7 +66,7 @@ export default function DoctorDashboard() {
   // Load doctor profile and appointments
   useEffect(() => {
     if (!user || user.role !== "doctor") {
-      router.push("/signin")
+      router.push("/Login")
       return
     }
 
@@ -120,6 +137,75 @@ export default function DoctorDashboard() {
     setAvailableSlots(prev => 
       prev.includes(slot) ? prev.filter(s => s !== slot) : [...prev, slot]
     )
+  }
+
+  const handleAddMedicineRow = () => {
+    setMedicines([...medicines, { name: "", frequency: "", duration: "", instruction: "" }])
+  }
+
+  const handleRemoveMedicineRow = (index: number) => {
+    if (medicines.length > 1) {
+      setMedicines(medicines.filter((_, idx) => idx !== index))
+    } else {
+      setMedicines([{ name: "", frequency: "", duration: "", instruction: "" }])
+    }
+  }
+
+  const handleMedicineChange = (index: number, field: string, value: string) => {
+    setMedicines(medicines.map((med, idx) => idx === index ? { ...med, [field]: value } : med))
+  }
+
+  const handleSavePrescription = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedApp || !token) return
+
+    const cleanMeds = medicines.filter(m => m.name.trim() !== "")
+    if (cleanMeds.length === 0) {
+      setErrorMsg("Please add at least one medicine.")
+      return
+    }
+
+    setIsPrescriptionSubmitting(true)
+    setErrorMsg("")
+    setSuccessMsg("")
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/appointments/${selectedApp._id}/prescription`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          doctorName: user?.fullName  || "",
+          doctorDegree: prescriptionForm.doctorDegree,
+          clinicName: prescriptionForm.clinicName,
+          clinicAddress: prescriptionForm.clinicAddress,
+          clinicPhone: prescriptionForm.clinicPhone,
+          patientAge: prescriptionForm.patientAge,
+          patientSex: prescriptionForm.patientSex,
+          medicines: cleanMeds,
+          advice: prescriptionForm.advice,
+        })
+      })
+
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to submit prescription")
+      }
+
+      setAppointments(appointments.map(app => app._id === selectedApp._id ? data : app))
+      setSuccessMsg("Prescription submitted successfully and appointment marked completed!")
+      setShowPrescriptionModal(false)
+      setSelectedApp(null)
+      setMedicines([{ name: "", frequency: "", duration: "", instruction: "" }])
+      setTimeout(() => setSuccessMsg(""), 4000)
+    } catch (err: any) {
+      setErrorMsg(err.message || "Something went wrong saving the prescription.")
+      setTimeout(() => setErrorMsg(""), 4000)
+    } finally {
+      setIsPrescriptionSubmitting(false)
+    }
   }
 
   const handleSaveAvailability = (e: React.FormEvent) => {
@@ -315,11 +401,15 @@ export default function DoctorDashboard() {
                               {app.status === "Confirmed" && (
                                 <div className="flex justify-end gap-2">
                                   <button
-                                    onClick={() => handleUpdateStatus(app._id, "Completed")}
-                                    className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 cursor-pointer transition-colors"
-                                    title="Mark completed"
+                                    onClick={() => {
+                                      setSelectedApp(app)
+                                      setShowPrescriptionModal(true)
+                                    }}
+                                    className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 cursor-pointer transition-colors flex items-center gap-1 text-[10px] font-bold"
+                                    title="Write Prescription & Complete"
                                   >
                                     <CheckCircle2 className="h-4 w-4" />
+                                    Prescribe
                                   </button>
                                   <button
                                     onClick={() => handleUpdateStatus(app._id, "Cancelled")}
@@ -330,7 +420,15 @@ export default function DoctorDashboard() {
                                   </button>
                                 </div>
                               )}
-                              {app.status !== "Confirmed" && (
+                              {app.status === "Completed" && (
+                                <button
+                                  onClick={() => router.push(`/prescription/${app._id}`)}
+                                  className="text-xs font-bold text-emerald-600 hover:text-emerald-700 underline cursor-pointer"
+                                >
+                                  View Rx
+                                </button>
+                              )}
+                              {app.status === "Cancelled" && (
                                 <span className="text-xs text-slate-400 italic">No actions</span>
                               )}
                             </td>
@@ -417,6 +515,210 @@ export default function DoctorDashboard() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Prescription Modal */}
+        {showPrescriptionModal && selectedApp && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl p-6 sm:p-8 space-y-6"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white">Create Digital Prescription</h3>
+                  <p className="text-xs text-slate-500">For Patient: <span className="font-bold text-slate-700 dark:text-slate-350">{selectedApp.patientName}</span></p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setShowPrescriptionModal(false)
+                    setSelectedApp(null)
+                  }}
+                  className="text-slate-400 hover:text-slate-650 cursor-pointer"
+                >
+                  <XCircle className="h-6 w-6" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSavePrescription} className="space-y-6">
+                
+                {/* Doctor Degree & Clinic Details */}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Your Qualifications / Degree</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={prescriptionForm.doctorDegree}
+                      onChange={(e) => setPrescriptionForm({ ...prescriptionForm, doctorDegree: e.target.value })}
+                      className="w-full h-10 border border-slate-200 dark:border-slate-800 rounded-xl px-3 text-xs bg-white dark:bg-slate-950 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Clinic Name</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={prescriptionForm.clinicName}
+                      onChange={(e) => setPrescriptionForm({ ...prescriptionForm, clinicName: e.target.value })}
+                      className="w-full h-10 border border-slate-200 dark:border-slate-800 rounded-xl px-3 text-xs bg-white dark:bg-slate-950 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Clinic Address</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={prescriptionForm.clinicAddress}
+                      onChange={(e) => setPrescriptionForm({ ...prescriptionForm, clinicAddress: e.target.value })}
+                      className="w-full h-10 border border-slate-200 dark:border-slate-800 rounded-xl px-3 text-xs bg-white dark:bg-slate-950 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Clinic Phone</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={prescriptionForm.clinicPhone}
+                      onChange={(e) => setPrescriptionForm({ ...prescriptionForm, clinicPhone: e.target.value })}
+                      className="w-full h-10 border border-slate-200 dark:border-slate-800 rounded-xl px-3 text-xs bg-white dark:bg-slate-950 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Patient Demographics */}
+                <div className="bg-slate-50 dark:bg-slate-950/40 p-4 rounded-2xl grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Patient Age</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="e.g. 32 Y"
+                      value={prescriptionForm.patientAge}
+                      onChange={(e) => setPrescriptionForm({ ...prescriptionForm, patientAge: e.target.value })}
+                      className="w-full h-10 border border-slate-200 dark:border-slate-800 rounded-xl px-3 text-xs bg-white dark:bg-slate-950 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Patient Sex</label>
+                    <select 
+                      value={prescriptionForm.patientSex}
+                      onChange={(e) => setPrescriptionForm({ ...prescriptionForm, patientSex: e.target.value })}
+                      className="w-full h-10 border border-slate-200 dark:border-slate-800 rounded-xl px-3 text-xs bg-white dark:bg-slate-950 focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="M">Male (M)</option>
+                      <option value="F">Female (F)</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Medicines Table */}
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Prescribed Medicines</label>
+                    <button 
+                      type="button"
+                      onClick={handleAddMedicineRow}
+                      className="text-xs font-bold text-emerald-600 hover:text-emerald-700 cursor-pointer"
+                    >
+                      + Add Medicine
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {medicines.map((med, idx) => (
+                      <div key={idx} className="flex gap-2 items-center bg-slate-50/50 dark:bg-slate-950/15 p-3 rounded-2xl border border-slate-100 dark:border-slate-850">
+                        <span className="text-xs text-slate-400 font-bold shrink-0">#{idx + 1}</span>
+                        <div className="grid gap-2 grid-cols-1 sm:grid-cols-4 flex-1">
+                          <input 
+                            type="text" 
+                            required
+                            placeholder="Medicine Name"
+                            value={med.name}
+                            onChange={(e) => handleMedicineChange(idx, "name", e.target.value)}
+                            className="h-9 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 text-xs bg-white dark:bg-slate-950 focus:outline-none"
+                          />
+                          <input 
+                            type="text" 
+                            placeholder="Frequency"
+                            value={med.frequency}
+                            onChange={(e) => handleMedicineChange(idx, "frequency", e.target.value)}
+                            className="h-9 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 text-xs bg-white dark:bg-slate-950 focus:outline-none"
+                          />
+                          <input 
+                            type="text" 
+                            placeholder="Duration"
+                            value={med.duration}
+                            onChange={(e) => handleMedicineChange(idx, "duration", e.target.value)}
+                            className="h-9 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 text-xs bg-white dark:bg-slate-950 focus:outline-none"
+                          />
+                          <input 
+                            type="text" 
+                            placeholder="Instructions"
+                            value={med.instruction}
+                            onChange={(e) => handleMedicineChange(idx, "instruction", e.target.value)}
+                            className="h-9 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 text-xs bg-white dark:bg-slate-950 focus:outline-none"
+                          />
+                        </div>
+                        {medicines.length > 1 && (
+                          <button 
+                            type="button"
+                            onClick={() => handleRemoveMedicineRow(idx)}
+                            className="text-red-500 hover:text-red-755 p-1.5 cursor-pointer shrink-0"
+                          >
+                            <XCircle className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Advice / Instructions */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Clinical Advice / Instructions</label>
+                  <textarea 
+                    rows={3}
+                    placeholder="General recommendations for the patient..."
+                    value={prescriptionForm.advice}
+                    onChange={(e) => setPrescriptionForm({ ...prescriptionForm, advice: e.target.value })}
+                    className="w-full border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-xs bg-white dark:bg-slate-950 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                {/* Submit button */}
+                <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setShowPrescriptionModal(false)
+                      setSelectedApp(null)
+                    }}
+                    className="h-11 px-4 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-650 dark:text-slate-450 font-semibold text-sm rounded-xl transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={isPrescriptionSubmitting}
+                    className="h-11 px-5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-2"
+                  >
+                    {isPrescriptionSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      "Issue Prescription"
+                    )}
+                  </button>
+                </div>
+
+              </form>
+            </motion.div>
+          </div>
+        )}
 
       </div>
     </div>

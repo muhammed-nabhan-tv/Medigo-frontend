@@ -31,6 +31,44 @@ const getAvatarColor = (specialty: string) => {
   }
 }
 
+const getLocalDateString = () => {
+  const d = new Date()
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const isTimeSlotInPast = (dateStr: string, timeSlot: string): boolean => {
+  const todayStr = getLocalDateString()
+  if (dateStr !== todayStr) return false
+
+  const match = timeSlot.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i)
+  if (!match) return false
+
+  let [_, hoursStr, minutesStr, ampm] = match
+  let hours = parseInt(hoursStr, 10)
+  const minutes = parseInt(minutesStr, 10)
+
+  if (ampm.toUpperCase() === "PM" && hours < 12) {
+    hours += 12
+  } else if (ampm.toUpperCase() === "AM" && hours === 12) {
+    hours = 0
+  }
+
+  const now = new Date()
+  const currentHours = now.getHours()
+  const currentMinutes = now.getMinutes()
+
+  if (hours < currentHours) {
+    return true
+  } else if (hours === currentHours && minutes < currentMinutes) {
+    return true
+  }
+
+  return false
+}
+
 export default function BookingPage() {
   const { user, token } = useAuth()
   const router = useRouter()
@@ -88,6 +126,10 @@ export default function BookingPage() {
         setErrorMsg("Please select a date and an available timeslot.")
         return
       }
+      if (isTimeSlotInPast(selectedDate, selectedTime)) {
+        setErrorMsg("Cannot book a timeslot in the past.")
+        return
+      }
       setStep(3)
     }
   }
@@ -105,6 +147,17 @@ export default function BookingPage() {
     }
 
     if (!user || !selectedDoctor || !token) return
+
+    const todayStr = getLocalDateString()
+    if (selectedDate < todayStr) {
+      setErrorMsg("Cannot book appointments in past dates.")
+      return
+    }
+
+    if (isTimeSlotInPast(selectedDate, selectedTime)) {
+      setErrorMsg("Cannot book a timeslot in the past.")
+      return
+    }
 
     setIsSubmitting(true)
     setErrorMsg("")
@@ -304,15 +357,21 @@ export default function BookingPage() {
                   </div>
                 </div>
 
-                {/* Date Picker Input */}
+                 {/* Date Picker Input */}
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-450 uppercase tracking-wider block">Choose Consultation Date</label>
                   <input
                     type="date"
                     required
                     value={selectedDate}
-                    min={new Date().toISOString().split("T")[0]}
-                    onChange={(e) => setSelectedDate(e.target.value)}
+                    min={getLocalDateString()}
+                    onChange={(e) => {
+                      const newDate = e.target.value
+                      setSelectedDate(newDate)
+                      if (selectedTime && isTimeSlotInPast(newDate, selectedTime)) {
+                        setSelectedTime("")
+                      }
+                    }}
                     className="w-full h-11 border border-slate-200 dark:border-slate-800 rounded-xl px-3 text-sm bg-white dark:bg-slate-900 focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10"
                   />
                 </div>
@@ -321,20 +380,26 @@ export default function BookingPage() {
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-450 uppercase tracking-wider block">Select Available Timeslot</label>
                   <div className="grid gap-2 grid-cols-3 sm:grid-cols-4">
-                    {(selectedDoctor?.availableSlots && selectedDoctor.availableSlots.length > 0 ? selectedDoctor.availableSlots : TIMESLOTS).map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setSelectedTime(t)}
-                        className={`py-3 text-xs font-bold rounded-xl border text-center transition-all cursor-pointer ${
-                          selectedTime === t
-                            ? "bg-emerald-600 text-white border-emerald-650 ring-2 ring-emerald-600/10"
-                            : "bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800 hover:border-emerald-500/60"
-                        }`}
-                      >
-                        {t}
-                      </button>
-                    ))}
+                    {(selectedDoctor?.availableSlots && selectedDoctor.availableSlots.length > 0 ? selectedDoctor.availableSlots : TIMESLOTS).map((t) => {
+                      const isPast = isTimeSlotInPast(selectedDate, t)
+                      return (
+                        <button
+                          key={t}
+                          type="button"
+                          disabled={isPast}
+                          onClick={() => setSelectedTime(t)}
+                          className={`py-3 text-xs font-bold rounded-xl border text-center transition-all ${
+                            isPast
+                              ? "bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-950/20 dark:border-slate-850/40 dark:text-slate-600 cursor-not-allowed"
+                              : selectedTime === t
+                              ? "bg-emerald-600 text-white border-emerald-650 ring-2 ring-emerald-600/10"
+                              : "bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800 hover:border-emerald-500/60 cursor-pointer"
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
 

@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Clock,
   Mail,
+  Trash2,
 } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { Input } from "@/components/ui/Input"
@@ -190,6 +191,30 @@ export default function ClinicDashboard() {
     }
   }
 
+  const handleRemoveDoctor = async (doctorId: string) => {
+    if (!confirm("Are you sure you want to remove this doctor? This action cannot be undone.")) return
+    if (!token) return
+    setErrorMsg("")
+    setSuccessMsg("")
+
+    try {
+      const res = await fetch(`http://localhost:5000/api/clinic/doctors/${doctorId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.message || "Failed to remove doctor")
+
+      setSuccessMsg(data.message || "Doctor removed successfully")
+      setDoctors((prev) => prev.filter((doc) => doc._id !== doctorId))
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to remove doctor")
+    }
+  }
+
   if (!user || user.role !== "clinic") return null
 
   const clinicLabel = user.clinicName || user.fullName
@@ -259,7 +284,7 @@ export default function ClinicDashboard() {
             {successMsg}
             {inviteLink && (
               <p className="mt-2 break-all text-xs font-normal text-emerald-700">
-                Invite link (email SMTP not configured — share manually):{" "}
+                Invite link (share manually):{" "}
                 <a href={inviteLink} className="underline">
                   {inviteLink}
                 </a>
@@ -409,10 +434,20 @@ export default function ClinicDashboard() {
                       </p>
                       <p className="mt-1 text-xs text-slate-500">{doc.education}</p>
                     </div>
-                    <div className="text-xs text-slate-500">
-                      <p className="font-semibold text-slate-700 dark:text-slate-300">Available</p>
-                      <p>{(doc.availableDays || []).join(", ")}</p>
-                      <p className="mt-1">{(doc.availableSlots || []).slice(0, 4).join(" · ")}</p>
+                    <div className="flex items-center gap-6">
+                      <div className="text-xs text-slate-500">
+                        <p className="font-semibold text-slate-700 dark:text-slate-300">Available</p>
+                        <p>{(doc.availableDays || []).join(", ")}</p>
+                        <p className="mt-1">{(doc.availableSlots || []).slice(0, 4).join(" · ")}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveDoctor(doc._id)}
+                        className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-red-200 text-red-600 transition-colors hover:bg-red-50 dark:border-red-900/40 dark:text-red-400 dark:hover:bg-red-950/20"
+                        title="Remove doctor"
+                      >
+                        <Trash2 className="h-4.5 w-4.5" />
+                      </button>
                     </div>
                   </div>
                 ))
@@ -432,12 +467,11 @@ export default function ClinicDashboard() {
               <div className="flex items-center gap-2">
                 <UserPlus className="h-5 w-5 text-emerald-600" />
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  Invite a doctor
+                  Add a doctor
                 </h3>
               </div>
               <p className="text-sm text-slate-500">
-                We&apos;ll email them a link to set their password. Once they do, they&apos;re added
-                as a verified doctor on Medigo.
+                Enter the doctor&apos;s details. They will receive an email with an activation link to set their password and access Medigo.
               </p>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -445,7 +479,7 @@ export default function ClinicDashboard() {
                   <label className="text-sm font-semibold">Full name</label>
                   <Input
                     required
-                    value={form.fullName}
+                    value={form.fullName || ""}
                     onChange={(e) => setForm({ ...form, fullName: e.target.value })}
                     placeholder="Dr. Jane Smith"
                   />
@@ -455,7 +489,7 @@ export default function ClinicDashboard() {
                   <Input
                     required
                     type="email"
-                    value={form.email}
+                    value={form.email || ""}
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
                     placeholder="doctor@example.com"
                   />
@@ -464,7 +498,7 @@ export default function ClinicDashboard() {
                   <label className="text-sm font-semibold">Phone</label>
                   <Input
                     required
-                    value={form.phone}
+                    value={form.phone || ""}
                     onChange={(e) => setForm({ ...form, phone: e.target.value })}
                     placeholder="+91 9876543210"
                   />
@@ -473,7 +507,7 @@ export default function ClinicDashboard() {
                   <label className="text-sm font-semibold">Category / specialty</label>
                   <Input
                     required
-                    value={form.category}
+                    value={form.category || ""}
                     onChange={(e) => setForm({ ...form, category: e.target.value })}
                     placeholder="Cardiology"
                   />
@@ -482,7 +516,7 @@ export default function ClinicDashboard() {
                   <label className="text-sm font-semibold">Education</label>
                   <Input
                     required
-                    value={form.education}
+                    value={form.education || ""}
                     onChange={(e) => setForm({ ...form, education: e.target.value })}
                     placeholder="MD, Harvard Medical School"
                   />
@@ -492,7 +526,7 @@ export default function ClinicDashboard() {
                   <Input
                     type="number"
                     min={0}
-                    value={form.experience}
+                    value={form.experience || ""}
                     onChange={(e) => setForm({ ...form, experience: e.target.value })}
                   />
                 </div>
@@ -546,9 +580,9 @@ export default function ClinicDashboard() {
                 {isSubmitting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Mail className="h-4 w-4" />
+                  <UserPlus className="h-4 w-4" />
                 )}
-                Send invite email
+                Add doctor & send invite
               </button>
             </motion.form>
           )}

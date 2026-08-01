@@ -108,31 +108,8 @@ export default function ProfilePage() {
 
   // Segregate appointments into upcoming vs past
   const todayStr = new Date().toISOString().split("T")[0]
-  const upcomingAppointments = appointments.filter((app) => app.date >= todayStr)
-  
-  // Add some mock past appointments to look full & professional
-  const pastAppointments = [
-    {
-      id: "past-1",
-      doctorName: "Dr. Sarah Jenkins, MD",
-      specialty: "General Medicine",
-      date: "2026-05-14",
-      time: "09:00 AM",
-      reason: "Initial Onboarding Consultation",
-      type: "In-Clinic Appointment",
-      status: "Completed"
-    },
-    {
-      id: "past-2",
-      doctorName: "Dr. James Carter, MD",
-      specialty: "Dermatology",
-      date: "2026-06-02",
-      time: "02:30 PM",
-      reason: "Allergy follow-up consult",
-      type: "Video Consultation",
-      status: "Completed"
-    }
-  ]
+  const upcomingAppointments = appointments.filter((app) => app.date >= todayStr && app.status !== "Cancelled" && app.status !== "Completed")
+  const pastAppointments = appointments.filter((app) => app.date < todayStr || app.status === "Cancelled" || app.status === "Completed")
 
   return (
     <div className="flex-1 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 p-4 sm:p-6 lg:p-8 font-sans">
@@ -384,41 +361,62 @@ export default function ProfilePage() {
                 Past Medical Logs
               </h3>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                {pastAppointments.map((app) => (
-                  <div
-                    key={app.id}
-                    className="bg-slate-50/50 dark:bg-slate-800/10 border border-slate-100/50 dark:border-slate-800/50 p-4 rounded-2xl space-y-3 opacity-80"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="text-sm font-bold text-slate-900 dark:text-white">{app.doctorName}</h4>
-                        <p className="text-xs text-slate-450 font-semibold">{app.specialty}</p>
+              {pastAppointments.length === 0 ? (
+                <p className="text-xs text-slate-500 py-6 text-center w-full">No past consultation records.</p>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {pastAppointments.map((app, index) => {
+                    const appId = app._id || app.id || `past-${index}`;
+                    return (
+                      <div
+                        key={appId}
+                        className="bg-slate-50/50 dark:bg-slate-800/10 border border-slate-100/50 dark:border-slate-800/50 p-4 rounded-2xl space-y-3 opacity-80"
+                      >
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="text-sm font-bold text-slate-900 dark:text-white">{app.doctorName}</h4>
+                            <p className="text-xs text-slate-450 font-semibold">{app.specialty}</p>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
+                            app.status === "Cancelled"
+                              ? "text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950/20"
+                              : app.status === "Completed"
+                              ? "text-slate-600 bg-slate-100 dark:text-slate-450 dark:bg-slate-800/60"
+                              : "text-slate-500 bg-slate-50 dark:text-slate-400 dark:bg-slate-850/40"
+                          }`}>
+                            {app.status}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                          <p className="flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                            {app.date}
+                          </p>
+                          <p className="flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5 text-slate-400" />
+                            {app.time} ({app.type})
+                          </p>
+                        </div>
+
+                        <div className="border-t border-slate-200/30 dark:border-slate-800/30 pt-3 flex justify-between items-center">
+                          <span className="text-[10px] font-medium text-slate-450 block truncate max-w-[160px]">
+                            Reason: {app.reason}
+                          </span>
+                          {(app as any).prescription && (
+                            <button
+                              onClick={() => router.push(`/prescription/${appId}`)}
+                              className="text-xs font-bold text-emerald-600 hover:text-emerald-750 underline cursor-pointer"
+                            >
+                              View Rx
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 dark:text-slate-400 dark:bg-slate-850 px-2.5 py-0.5 rounded-full">
-                        {app.status}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
-                      <p className="flex items-center gap-1.5">
-                        <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                        {app.date}
-                      </p>
-                      <p className="flex items-center gap-1.5">
-                        <Clock className="h-3.5 w-3.5 text-slate-400" />
-                        {app.time} ({app.type})
-                      </p>
-                    </div>
-
-                    <div className="border-t border-slate-200/30 dark:border-slate-800/30 pt-3">
-                      <span className="text-[10px] font-medium text-slate-450 block truncate">
-                        Diagnosis summary: Patient onboarded successfully. Stable cardiovascular logs.
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
           </div>

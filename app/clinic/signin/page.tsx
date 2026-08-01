@@ -96,7 +96,7 @@ export default function ClinicSignInPage() {
         </p>
         <p className="text-center text-xs text-slate-400">
           Patient or doctor?{" "}
-          <Link href="/signin" className="text-emerald-600 hover:underline">
+          <Link href="/Login" className="text-emerald-600 hover:underline">
             Use the main sign in
           </Link>
         </p>

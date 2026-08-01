@@ -14,8 +14,8 @@ export default function Navbar() {
   const [isProfileOpen, setIsProfileOpen] = useState(false)
 
   // Do not render navbar on auth / clinic portal / set-password pages
-  const authPaths = ["/signin", "/signup", "/clinic/signin", "/clinic/signup", "/set-password"]
-  if (authPaths.includes(pathname) || pathname === "/clinic" || pathname.startsWith("/doctor")) return null
+  const authPaths = ["/Login", "/signup", "/clinic/signin", "/clinic/signup", "/set-password"]
+  if (authPaths.includes(pathname) || pathname === "/clinic" || pathname.startsWith("/doctor") || pathname.startsWith("/prescription")) return null
 
   const getInitials = (name: string) => {
     return name
@@ -145,7 +145,7 @@ export default function Navbar() {
             ) : (
               <div className="flex items-center gap-3">
                 <Link
-                  href="/signin"
+                  href="/Login"
                   className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all dark:text-slate-300 dark:hover:bg-slate-900"
                 >
                   Sign In
@@ -236,11 +236,11 @@ export default function Navbar() {
           ) : (
             <div className="border-t border-slate-100 pt-4 space-y-2 dark:border-slate-800">
               <Link
-                href="/signin"
+                href="/Login"
                 onClick={() => setIsOpen(false)}
                 className="flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
               >
-                Sign In
+                Login
               </Link>
               <Link
                 href="/signup"

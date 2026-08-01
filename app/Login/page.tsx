@@ -35,7 +35,7 @@ export default function SignInPage() {
   // OTP 2FA States
   const [showOTPVerify, setShowOTPVerify] = React.useState(false)
   const [otpEmail, setOtpEmail] = React.useState("")
-  const [phoneObfuscated, setPhoneObfuscated] = React.useState("")
+  const [emailObfuscated, setEmailObfuscated] = React.useState("")
   const [debugOtp, setDebugOtp] = React.useState("")
   const [otpCode, setOtpCode] = React.useState("")
   const [isVerifying, setIsVerifying] = React.useState(false)
@@ -77,14 +77,14 @@ export default function SignInPage() {
         
         if (res && res.requireOTP) {
           setOtpEmail(res.email)
-          setPhoneObfuscated(res.phoneObfuscated || "")
+          setEmailObfuscated(res.emailObfuscated || "")
           if (res.debugOtp) {
             setDebugOtp(res.debugOtp)
           } else {
             setDebugOtp("")
           }
           setShowOTPVerify(true)
-          setSuccessMsg("Verification code sent to your registered phone!")
+          setSuccessMsg("Verification code sent to your email address!")
         } else {
           setSuccessMsg("Success! Redirecting to dashboard...")
           const dest = role === "doctor" ? "/doctor" : "/"
@@ -299,7 +299,7 @@ export default function SignInPage() {
               <div className="text-center space-y-2">
                 <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Verify Your Identity</h3>
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                  We've sent a 6-digit verification code to your phone number ending in <span className="font-semibold text-slate-700 dark:text-slate-200">{phoneObfuscated || "digits"}</span>.
+                  We've sent a 6-digit verification code to your email <span className="font-semibold text-slate-700 dark:text-slate-200">{emailObfuscated || "email"}</span>.
                 </p>
               </div>
 

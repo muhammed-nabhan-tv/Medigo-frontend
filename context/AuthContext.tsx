@@ -163,7 +163,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     if (isLoading) return
 
-    const publicPages = ["/", "/signin", "/signup", "/about", "/contact", "/set-password"]
+    const publicPages = ["/", "/Login", "/signup", "/about", "/contact", "/set-password"]
     const isClinicAuthPage =
       pathname === "/clinic/signin" || pathname === "/clinic/signup"
     const isPublicPage = publicPages.includes(pathname) || isClinicAuthPage
@@ -173,7 +173,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (pathname.startsWith("/clinic")) {
           router.push("/clinic/signin")
         } else {
-          router.push("/signin")
+          router.push("/Login")
         }
       }
       return
@@ -185,7 +185,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         pathname.startsWith("/booking") ||
         pathname.startsWith("/profile") ||
         pathname.startsWith("/doctor") ||
-        pathname === "/signin" ||
+        pathname === "/Login" ||
         pathname === "/signup" ||
         pathname === "/clinic/signin" ||
         pathname === "/clinic/signup"
